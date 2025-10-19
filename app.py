@@ -1,14 +1,11 @@
 import streamlit as st
 from src.audio_recorder import AudioRecorder
 from src.transcriber import transcribe_audio
+from src.summarizer import summarize_transcript  # <--- 1. IMPORT IT
 import os
 
 # --- Page Configuration ---
-st.set_page_config(
-    page_title="RememberMe AI",
-    page_icon="🧠",
-    layout="centered",
-)
+st.set_page_config(page_title="RememberMe AI", page_icon="🧠", layout="centered")
 
 # --- App Title ---
 st.title("🧠 RememberMe AI")
@@ -17,11 +14,10 @@ st.caption("Your personal conversation memory assistant.")
 # --- Main App ---
 st.header("Record a New Memory")
 
-# We use a button to trigger the recording
 if st.button("Start 5-Second Recording", type="primary", use_container_width=True):
     
-    # 1. Show a message while recording
     with st.spinner("🎤 Recording for 5 seconds..."):
+        # ... (recording code is the same) ...
         try:
             recorder = AudioRecorder()
             output_file = "temp_recording.wav"
@@ -29,21 +25,30 @@ if st.button("Start 5-Second Recording", type="primary", use_container_width=Tru
             recorder.cleanup()
         except Exception as e:
             st.error(f"Error during recording: {e}")
-            st.stop() # Stop the app if recording fails
+            st.stop()
 
-    # 2. Show a message while transcribing
-    with st.spinner("📝 Transcribing audio..."):
+    with st.spinner("📝 Transcribing and summarizing..."):
         try:
+            # ... (transcription code is the same) ...
             transcript = transcribe_audio(output_file)
-        except Exception as e:
-            st.error(f"Error during transcription: {e}")
-            st.stop() # Stop the app if transcription fails
+            
+            # <--- 2. CALL THE SUMMARIZER ---
+            summary = summarize_transcript(transcript) 
 
-    # 3. Show the result
-    st.success("Recording Transcribed!")
+        except Exception as e:
+            st.error(f"Error during AI processing: {e}")
+            st.stop() 
+
+    # 3. Show the results
+    st.success("Recording Processed!")
+    
+    # <--- 3. DISPLAY THE NEW SUMMARY ---
+    st.subheader("Your Simple Summary")
+    st.info(summary)  # Use st.info for a nice blue box
+
+    st.subheader("Full Transcript")
     st.text_area("Here's what you said:", transcript, height=150)
 
-    # 4. (Optional) Clean up the temporary audio file
     try:
         os.remove(output_file)
     except OSError as e:

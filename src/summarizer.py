@@ -46,7 +46,7 @@ def summarize_transcript(transcript: str) -> str:
     try:
         # This is the "Week 2" part: calling the chat API
         completion = client.chat.completions.create(
-            model="gpt-4",  # Or "gpt-3.5-turbo" for faster/cheaper
+            model="gpt-3.5-turbo",  # Or "gpt-3.5-turbo" for faster/cheaper
             messages=[
                 {
                     "role": "system",

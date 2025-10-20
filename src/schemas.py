@@ -6,11 +6,10 @@ from typing import List, Optional
 from datetime import datetime, time
 import uuid
 
-# We use Field(default_factory=...) to auto-generate IDs and timestamps
-
+# (ConversationSegment and ConversationSummary schemas are unchanged)
 class ConversationSegment(BaseModel):
     segment_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    patient_id: str = "patient_001"  # Hardcoded for now
+    patient_id: str = "patient_001"
     start_time: datetime = Field(default_factory=datetime.utcnow)
     end_time: datetime
     transcript: str
@@ -23,11 +22,7 @@ class ConversationSummary(BaseModel):
     summary_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     segment_id: str
     generated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Patient-facing (simple)
     simple_summary: str
-    
-    # Caregiver-facing (detailed)
     participant: str = "Unknown"
     topics_discussed: List[str] = []
     patient_mood: str = "unknown"
@@ -38,15 +33,20 @@ class ConversationSummary(BaseModel):
         populate_by_name = True
         alias_generator = lambda x: "_id" if x == "summary_id" else x
 
-# --- NEW SCHEMA ---
+# --- UPDATED MEDICATION SCHEMA ---
 class Medication(BaseModel):
     medication_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    patient_id: str = "patient_001" # Hardcoded for now
+    patient_id: str = "patient_001"
     name: str
     dosage: str
     purpose: str
-    time_to_take: str # Storing as a string like "08:00 AM"
+    time_to_take: str # Storing as "HH:MM AM/PM"
+    
+    # New fields for advanced scheduling
+    frequency: str # e.g., "Daily", "Weekly"
+    days_of_week: Optional[List[str]] = None # e.g., ["Monday", "Wednesday", "Friday"]
 
     class Config:
         populate_by_name = True
         alias_generator = lambda x: "_id" if x == "medication_id" else x
+

@@ -5,8 +5,9 @@ import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from src.schemas import ConversationSegment, ConversationSummary
+from datetime import datetime, time # <--- ADD 'time' IMPORT
 
-# Load environment variables (MONGO_CONNECTION_STRING)
+# Load environment variables
 load_dotenv()
 
 # --- Database Connection ---
@@ -43,8 +44,6 @@ def save_conversation(segment: ConversationSegment, summary: ConversationSummary
         return
 
     try:
-        # Convert Pydantic models to dicts for MongoDB
-        # We use by_alias=True to use "_id" instead of "segment_id"
         print(f"💾 Saving segment {segment.segment_id} to database...")
         segment_collection.insert_one(segment.model_dump(by_alias=True))
         
@@ -58,18 +57,31 @@ def save_conversation(segment: ConversationSegment, summary: ConversationSummary
 
 def get_all_conversations():
     """
-    Fetches all conversations and their summaries from the database.
+    Fetches all conversation summaries from the database.
     """
-    if not client:
-        print("Database not connected. Cannot fetch.")
-        return []
-
-    # For simplicity, we'll just fetch all summaries for now
-    # A real app would use a more complex query (a $lookup pipeline)
-    
+    if not client: return []
     try:
-        summaries = summary_collection.find().sort("generated_at", -1) # Get newest first
-        return list(summaries) # Return a list of dicts
+        summaries = summary_collection.find().sort("generated_at", -1)
+        return list(summaries)
     except Exception as e:
         print(f"❌ Error fetching from database: {e}")
+        return []
+
+# --- NEW FUNCTION ---
+def get_todays_conversations():
+    """
+    Fetches all conversation summaries recorded today.
+    """
+    if not client: return []
+    try:
+        # Define the start of today (midnight)
+        today = datetime.now().date()
+        start_of_day = datetime.combine(today, time.min)
+
+        # Query for summaries generated since the start of today
+        query = {"generated_at": {"$gte": start_of_day}}
+        summaries = summary_collection.find(query).sort("generated_at", 1) # Oldest first
+        return list(summaries)
+    except Exception as e:
+        print(f"❌ Error fetching today's conversations: {e}")
         return []

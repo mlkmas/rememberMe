@@ -17,8 +17,10 @@ except Exception as e:
 SIMPLE_SUMMARY_PROMPT = """
 You are summarizing a conversation for a person with dementia.
 Rules:
+
+**CRITICAL RULE: You MUST ONLY use information explicitly present in the transcript. DO NOT add or invent any details, people, or events.**
 - Use simple, clear language (5th grade reading level)
-- Use present tense and second person ("You spoke with...")
+- Use present tense and second person ("You spoke with...") if you did not hear the patient refer to themselves by name.
 - Identify people with their relationship ("Sarah, your daughter")
 - Focus on: who they talked to, what they discussed, future plans
 - Keep it under 100 words
@@ -36,23 +38,25 @@ Generate simple summary:
 # In src/summarizer.py
 
 CLINICAL_JSON_SCHEMA = {
-    "participant": "Name of the other person in the conversation (e.g., 'Sarah (daughter)', 'Dr. Martinez')",
+    "participant": "Name of the other person if mentioned, otherwise write 'Unknown' or 'Patient speaking alone'. DO NOT INVENT A NAME.",
     "topics_discussed": ["list of main topics, e.g., 'Family updates', 'Upcoming piano recital'"],
     
     # IMPROVED MOOD INSTRUCTIONS
     "patient_mood": "Analyze the patient's words for emotion. Choose one: 'positive' (e.g., 'I'm happy', laughing), 'neutral' (e.g., factual statements), 'anxious' (e.g., worrying), 'confused', 'agitated', 'negative' (e.g., 'my knee hurts', 'I'm sad').",
     
     "cognitive_state": "one-sentence summary of patient's performance, e.g., 'Engaged, but repeated questions about the date.'",
-    "key_concerns": ["list of clinical concerns, e.g., 'Repeated a question', 'Showed memory lapse about a recent event', 'Expressed physical pain', 'Showed confusion about time/place'"]
+    "key_concerns": ["list of clinical concerns explicitly mentioned, e.g., 'Repeated a question', 'Expressed physical pain', 'Showed confusion about time/place'"]
+
 }
 
 # Note: This is NOT an f-string (no 'f' at the beginning)
 # This is a template, which we will .format() later.
 CLINICAL_SUMMARY_PROMPT = """
 You are a clinical assistant analyzing a conversation involving a dementia patient.
-The patient is one of the speakers.
-Analyze the transcript and provide a clinical summary.
-Respond ONLY with a valid JSON object that adheres to the following schema:
+
+**CRITICAL RULE: You MUST ONLY use information explicitly present in the transcript. DO NOT HALLUCINATE OR INVENT any details, people, or events. If a piece of information is not present, use 'Unknown' or an empty list.**
+
+Analyze the transcript and provide a clinical summary. Respond ONLY with a valid JSON object that adheres to this schema:
 {schema}
 
 Transcript:

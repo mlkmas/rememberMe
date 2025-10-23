@@ -1,51 +1,81 @@
+# src/schemas.py
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, date
-import uuid
+from uuid import uuid4
+
+# --- Helper for MongoDB's _id ---
+# This lets us use 'id' in our code but store it as '_id' in Mongo
+class PyObjectId(str):
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
+    @classmethod
+    def validate(cls, v, *args, **kwargs):
+        if not isinstance(v, str):
+            raise TypeError('string required')
+        if not v.strip(): # Handle empty strings if needed
+             raise ValueError('string must not be empty')
+        return str(v) # Return it as a string
+
+# --- Conversation Schemas ---
 
 class ConversationSegment(BaseModel):
-    segment_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    patient_id: str = "patient_001"
-    start_time: datetime = Field(default_factory=datetime.utcnow)
+    id: PyObjectId = Field(default_factory=lambda: str(uuid4()), alias="_id")
+    patient_id: str = "default_patient" # Hardcoded for now
+    start_time: datetime
     end_time: datetime
     transcript: str
+    
     class Config:
-        populate_by_name = True
-        alias_generator = lambda x: "_id" if x == "segment_id" else x
+        populate_by_name = True # Use the alias "_id"
+        json_encoders = {PyObjectId: str}
 
 class ConversationSummary(BaseModel):
-    summary_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    segment_id: str
+    id: PyObjectId = Field(default_factory=lambda: str(uuid4()), alias="_id")
+    segment_id: str # Links to the ConversationSegment
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Patient-facing
     simple_summary: str
-    participant: Optional[str] = None
-    topics_discussed: List[str] = []
-    patient_mood: str = "unknown"
-    cognitive_state: str = "unknown"
-    key_concerns: List[str] = []
+    
+    # Caregiver-facing (from summarizer.py)
+    participant: str
+    topics_discussed: List[str]
+    patient_mood: str
+    cognitive_state: str
+    key_concerns: List[str]
+    
     class Config:
         populate_by_name = True
-        alias_generator = lambda x: "_id" if x == "summary_id" else x
+        json_encoders = {PyObjectId: str}
+
+# --- Medication Schema ---
 
 class Medication(BaseModel):
-    medication_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    patient_id: str = "patient_001"
+    id: PyObjectId = Field(default_factory=lambda: str(uuid4()), alias="_id")
     name: str
     dosage: str
     purpose: str
-    time_to_take: str
-    
-    # Advanced Scheduling Fields
-    schedule_type: str  # "Daily", "Weekly", "One-Time"
-    
-    # For 'Weekly'
-    days_of_week: Optional[List[str]] = None
-    
-    # --- THE FIX IS HERE ---
-    # For 'One-Time' - This now expects a full datetime object
-    specific_date: Optional[datetime] = None
+    time_to_take: str # e.g., "08:00 AM"
+    schedule_type: str # "Daily", "Weekly", "One-Time"
+    days_of_week: Optional[List[str]] = None # For "Weekly"
+    specific_date: Optional[datetime] = None # For "One-Time"
     
     class Config:
         populate_by_name = True
-        alias_generator = lambda x: "_id" if x == "medication_id" else x
+        json_encoders = {PyObjectId: str, datetime: lambda d: d.isoformat()}
 
+# --- People Schema (THIS IS THE ONE YOU WERE MISSING) ---
+
+class PersonProfile(BaseModel):
+    id: PyObjectId = Field(default_factory=lambda: str(uuid4()), alias="_id")
+    patient_id: str = "default_patient" # Hardcoded for now
+    name: str
+    relationship: str # "Daughter", "Son", "Caregiver"
+    photo_url: str
+    notes: Optional[str] = ""
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {PyObjectId: str}

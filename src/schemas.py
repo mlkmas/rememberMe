@@ -1,31 +1,16 @@
 # src/schemas.py
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional # Ensure Optional is imported
 from datetime import datetime, date
-from uuid import uuid4
 
-# --- Helper for MongoDB's _id ---
-class PyObjectId(str):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-    @classmethod
-    def validate(cls, v, *args, **kwargs):
-        if not isinstance(v, str):
-            raise TypeError('string required')
-        # Generate a new string ID if v is None or empty
-        if v is None or not v.strip():
-            return str(uuid4())
-        return str(v)
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, field_schema):
-        field_schema.update(type='string')
+# --- REMOVED PyObjectId class ---
+# MongoDB will generate the _id automatically.
 
 # --- Conversation Schemas ---
 
 class ConversationSegment(BaseModel):
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    # Changed: id is now Optional[str], default=None, no default_factory
+    id: Optional[str] = Field(default=None, alias="_id")
     patient_id: str = "default_patient"
     start_time: datetime
     end_time: datetime
@@ -33,18 +18,16 @@ class ConversationSegment(BaseModel):
 
     class Config:
         populate_by_name = True
+        # Allow ObjectId to be validated if needed when reading from DB
         arbitrary_types_allowed = True
-        json_encoders = {PyObjectId: str}
+
 
 class ConversationSummary(BaseModel):
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    # Changed: id is now Optional[str], default=None, no default_factory
+    id: Optional[str] = Field(default=None, alias="_id")
     segment_id: str
     generated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    # Patient-facing
     simple_summary: str
-
-    # Caregiver-facing (from summarizer.py)
     participant: str
     topics_discussed: List[str]
     patient_mood: str
@@ -54,12 +37,12 @@ class ConversationSummary(BaseModel):
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
-        json_encoders = {PyObjectId: str}
 
 # --- Medication Schema ---
 
 class Medication(BaseModel):
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    # Changed: id is now Optional[str], default=None, no default_factory
+    id: Optional[str] = Field(default=None, alias="_id")
     name: str
     dosage: str
     purpose: str
@@ -71,20 +54,20 @@ class Medication(BaseModel):
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
-        json_encoders = {PyObjectId: str, datetime: lambda d: d.isoformat()}
+        json_encoders = {datetime: lambda d: d.isoformat() if d else None}
 
 # --- People Schema ---
 
 class PersonProfile(BaseModel):
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    # Changed: id is now Optional[str], default=None, no default_factory
+    id: Optional[str] = Field(default=None, alias="_id")
     patient_id: str = "default_patient"
     name: str
     relationship: str
     photo_url: str
     notes: Optional[str] = ""
-    face_encoding: Optional[List[float]] = None # <-- ADDED FOR STEP 4
+    face_encoding: Optional[List[float]] = None
 
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
-        json_encoders = {PyObjectId: str}

@@ -15,7 +15,7 @@ except Exception as e:
     print(f"Error initializing OpenAI client: {e}")
     client = None
 
-# --- UPDATED PROMPT 1 (Simple) ---
+# --- UPDATED PROMPT 1 (Simple) (No changes needed) ---
 SIMPLE_SUMMARY_PROMPT = """
 You are summarizing a conversation for a person with dementia.
 Rules:
@@ -67,6 +67,7 @@ CLINICAL_JSON_SCHEMA = {
     "required": ["participant", "topics_discussed", "patient_mood", "cognitive_state", "key_concerns"]
 }
 
+# --- FIX: UPDATE CLINICAL_SUMMARY_PROMPT to include the schema definition ---
 CLINICAL_SUMMARY_PROMPT = """
 You are a clinical assistant analyzing a conversation involving a dementia patient.
 
@@ -74,17 +75,21 @@ You are a clinical assistant analyzing a conversation involving a dementia patie
 
 Analyze the transcript and provide a clinical summary. Respond ONLY with a valid JSON object that adheres to the provided schema.
 
-Transcript:
+**Schema:**
+{schema}
+
+**Transcript:**
 {transcript}
 """
 
-# --- FUNCTION 1 (Simple) ---
+
+# --- FUNCTION 1 (Simple) (No changes needed) ---
 def summarize_transcript_simple(transcript: str) -> str:
     if not client: return "Error: OpenAI client not initialized."
     if not transcript: return "Error: No transcript."
 
     print("🧠 Generating simple summary...")
-    
+
     # --- NEW: Get Known People (Step 1) ---
     try:
         people = get_all_people()
@@ -107,7 +112,7 @@ def summarize_transcript_simple(transcript: str) -> str:
                     "role": "system",
                     "content": SIMPLE_SUMMARY_PROMPT.format(
                         transcript=transcript,
-                        known_people=formatted_people # <-- PASS IT IN
+                        known_people=formatted_people  # <-- PASS IT IN
                     )
                 }
             ]
@@ -119,24 +124,30 @@ def summarize_transcript_simple(transcript: str) -> str:
         print(f"❌ Error during simple summarization: {e}")
         return f"Error: {e}"
 
+
 # --- FUNCTION 2 (Clinical) ---
 def summarize_transcript_clinical(transcript: str) -> dict:
     if not client: return {"error": "OpenAI client not initialized."}
     if not transcript: return {"error": "No transcript provided."}
 
     print("🩺 Generating clinical summary...")
-    
-    prompt_content = CLINICAL_SUMMARY_PROMPT.format(transcript=transcript)
-    
+
+    # --- FIX: Inject the schema JSON as a string into the prompt ---
+    prompt_content = CLINICAL_SUMMARY_PROMPT.format(
+        transcript=transcript,
+        schema=json.dumps(CLINICAL_JSON_SCHEMA, indent=2)  # <-- Add this
+    )
+
     try:
         completion = client.chat.completions.create(
-            model="gpt-4-turbo", # Use a model that fully supports JSON mode
-            response_format={ "type": "json_object", "schema": CLINICAL_JSON_SCHEMA },
+            model="gpt-4-turbo",  # Use a model that fully supports JSON mode
+            # --- FIX: Remove the 'schema' key from response_format ---
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": prompt_content}
             ]
         )
-        
+
         clinical_data = json.loads(completion.choices[0].message.content)
         print("✅ Clinical summary complete!")
         return clinical_data
@@ -145,7 +156,7 @@ def summarize_transcript_clinical(transcript: str) -> dict:
         print(f"❌❌❌ FULL TRACEBACK ... ❌❌❌")
         traceback.print_exc()
         print(f"❌❌❌ ... END TRACEBACK ❌❌❌")
-        
+
         # Return a dict with the expected keys
         return {
             "participant": "Error",
@@ -155,14 +166,15 @@ def summarize_transcript_clinical(transcript: str) -> dict:
             "key_concerns": ["Error processing transcript"]
         }
 
+
 if __name__ == "__main__":
     print("--- Testing Summarizer Module ---")
     test_transcript = "Hi, this is Sarah. I'm just calling to say I love you. Patient: 'I love you too. My knee hurts.' ... Patient: 'What day is it?'"
-    
+
     print("\n--- Testing Simple Summary ---")
     simple_summary = summarize_transcript_simple(test_transcript)
     print(simple_summary)
-    
+
     print("\n--- Testing Clinical Summary ---")
     clinical_summary = summarize_transcript_clinical(test_transcript)
     print(json.dumps(clinical_summary, indent=2))

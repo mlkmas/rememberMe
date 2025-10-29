@@ -24,14 +24,13 @@ if 'editing_med_id' not in st.session_state:
     st.session_state.editing_med_id = None
 if 'editing_person_id' not in st.session_state:
     st.session_state.editing_person_id = None
-# This is the "source of truth" for the schedule type
 if 'schedule_type' not in st.session_state:
     st.session_state.schedule_type = "Daily"
 
 # --- UI Layout ---
 col1, col2, col3 = st.columns(3)
 
-# --- COLUMN 1: MANAGE MEDICATIONS ---
+# --- COLUMN 1: MANAGE MEDICATIONS (This code is the correct version from our last step) ---
 with col1:
     st.header("Manage Medication Schedule")
     st.subheader("Current Medication Schedule")
@@ -52,7 +51,6 @@ with col1:
             except ValueError:
                 st.session_state.med_time = time(8, 0)
 
-            # This is the important part: set the "source of truth"
             schedule_type = med_to_edit.get('schedule_type', 'Daily')
             st.session_state.schedule_type = schedule_type
 
@@ -70,19 +68,15 @@ with col1:
 
     def clear_form_state_med():
         st.session_state.editing_med_id = None
-        # Clear all form fields
         keys_to_clear = ['med_name', 'med_dosage', 'med_purpose', 'med_time',
                          'days_of_week', 'specific_date']
         for key in keys_to_clear:
             if key in st.session_state:
                 del st.session_state[key]
-
-        # --- FIX: Manually reset the "source of truth" ---
-        # This is safe because the radio button will just read this value
         st.session_state.schedule_type = 'Daily'
 
 
-    # --- Display Current Medications (No changes here) ---
+    # --- Display Current Medications ---
     if not medications:
         st.info("No medications added yet.")
     else:
@@ -127,31 +121,22 @@ with col1:
     submit_button_text_med = "Update Medication" if st.session_state.editing_med_id else "Add Medication"
 
 
-    # --- FIX: Use an on_change callback ---
-
-    # This function will be called *by* the radio button
-    # It updates the "source of truth"
     def on_schedule_type_change():
-        # 'radio_schedule_key' is the widget's key
-        # 'schedule_type' is our app's "source of truth"
         st.session_state.schedule_type = st.session_state.radio_schedule_key
 
 
     schedule_options = ["Daily", "Weekly", "One-Time"]
-    # The radio button reads its default index from our "source of truth"
     current_schedule_index = schedule_options.index(st.session_state.schedule_type)
 
-    # This radio button is outside the form and updates state immediately
     st.radio(
         "Schedule Type",
         options=schedule_options,
         index=current_schedule_index,
         horizontal=True,
-        key='radio_schedule_key',  # Give the widget its own key
-        on_change=on_schedule_type_change  # Tell it to run our function when clicked
+        key='radio_schedule_key',
+        on_change=on_schedule_type_change
     )
 
-    # The form starts *after* the radio button
     with st.form(key="med_form", clear_on_submit=True):
         med_name = st.text_input("Medication Name", value=st.session_state.get('med_name', ''))
         med_dosage = st.text_input("Dosage", value=st.session_state.get('med_dosage', ''))
@@ -159,8 +144,6 @@ with col1:
         med_time = st.time_input("Time to Take", value=st.session_state.get('med_time', time(8, 0)),
                                  step=timedelta(minutes=1))
 
-        # These widgets now read from 'st.session_state.schedule_type'
-        # This works because the radio button (outside) updates it
         days_of_week_val = None
         specific_date_val = None
 
@@ -176,7 +159,6 @@ with col1:
                 value=st.session_state.get('specific_date', date.today())
             )
 
-        # Submit button
         submitted = st.form_submit_button(submit_button_text_med, type="primary", use_container_width=True)
 
         if submitted:
@@ -186,7 +168,6 @@ with col1:
                 time_str = med_time.strftime("%I:%M %p")
                 final_specific_date = None
 
-                # The form also reads from the "source of truth" when saving
                 schedule_type_to_save = st.session_state.schedule_type
 
                 if schedule_type_to_save == 'One-Time' and specific_date_val:
@@ -211,24 +192,22 @@ with col1:
                         add_medication(new_med)
                         st.success(f"Added {med_name}!")
 
-                    # This is now safe, as it only touches 'schedule_type'
                     clear_form_state_med()
-                    st.rerun()
+                    st.rerun()  # <-- This reloads the page to show the new medication
                 except Exception as e:
                     st.error(f"Failed to save medication: {e}")
 
-    # Cancel button
     if st.session_state.editing_med_id:
         if st.button("Cancel Edit", key="cancel_med", use_container_width=True, on_click=clear_form_state_med):
             st.rerun()
 
-# --- COLUMN 2: MANAGE PEOPLE (No changes needed) ---
+# --- COLUMN 2: MANAGE PEOPLE (FIX APPLIED HERE) ---
 with col2:
     st.header("Manage People Profiles")
     st.caption("Add photos and details for people the patient interacts with.")
 
     st.subheader("Registered People")
-    people = get_all_people()
+    people = get_all_people()  # <-- This list will now be fresh
     if not people:
         st.info("No people profiles added yet.")
     else:
@@ -252,7 +231,7 @@ with col2:
                 with p_c3:
                     if st.button("Delete", key=f"del_person_{person_id}", type="secondary", use_container_width=True):
                         delete_person(person_id)
-                        st.rerun()
+                        st.rerun()  # <-- This already works correctly
     st.divider()
 
     st.subheader("Add New Person")
@@ -309,7 +288,7 @@ with col2:
                 )
 
                 print(f"--- DEBUG: Attempting to add person: {person_name} ---")
-                person_id = add_person(new_person)
+                person_id = add_person(new_person)  # This function already clears the cache
 
                 if person_id and face_encoding_list:
                     try:
@@ -327,6 +306,9 @@ with col2:
                     print(
                         f"--- DEBUG: Failed to add person {person_name} (already exists or DB error), cannot save encoding. ---")
                     st.warning(f"Could not add {person_name}, possibly already exists.")
+
+                # --- FIX: ADD THIS LINE ---
+                st.rerun()  # This will force the page to reload and show the new person
             else:
                 st.error("Please provide at least Name and Relationship.")
 
@@ -380,6 +362,9 @@ with col3:
 
             st.success("Recording Processed and Saved!")
             st.toast("Refreshing dashboard...")
+
+            # --- FIX: Also add st.rerun() here to update the dashboard data ---
+            st.rerun()
 
         except Exception as e:
             st.error(f"An error occurred: {e}")

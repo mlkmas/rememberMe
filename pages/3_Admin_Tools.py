@@ -13,6 +13,8 @@ from src.database import (
 from pathlib import Path
 import face_recognition
 import numpy as np
+import asyncio #
+from src.livekit_client import get_token, AudioReceiverAgent #
 
 #Reset dialog states on page load
 if 'page_loaded_admin' not in st.session_state:
@@ -234,102 +236,81 @@ with col2:
 # ========================================
 # COLUMN 3: TEST RECORDING
 # ========================================
+# ========================================
+# COLUMN 3: LIVEKIT TEST
+# ========================================
 with col3:
-    st.markdown("### 🎤 Test Recording")
-    st.caption("Quick test of the conversation pipeline")
+    st.markdown("### 🎙️ LiveKit Test")
+    st.caption("Test real-time audio streaming")
     st.divider()
 
-    pyaudio_installed = True
+    # Check if token server is running
+    token_server_status = "🔴 Offline"
     try:
-        import pyaudio
-    except ImportError:
-        pyaudio_installed = False
-        st.warning("⚠️ PyAudio not installed")
+        import requests
 
-    # Recording section with better spacing
-    st.markdown("##### Record a 5-second conversation")
+        response = requests.get("http://localhost:5000/get_token?identity=test", timeout=2)
+        if response.status_code == 200:
+            token_server_status = "🟢 Online"
+    except:
+        pass
 
-    if st.button(
-            "🔴 Start Recording",
-            use_container_width=True,
-            type="secondary",
-            disabled=not pyaudio_installed
-    ):
+    st.markdown(f"**Token Server:** {token_server_status}")
+
+    if token_server_status == "🔴 Offline":
+        st.warning("⚠️ Token server not running")
+        st.code("poetry run python src/token_server.py", language="bash")
+
+    st.divider()
+
+    st.markdown("##### Quick Recording Test")
+
+    if st.button("🔴 Record 5 Seconds (Old Method)", use_container_width=True, type="secondary"):
+        # Keep your existing 5-second test code here
         output_file = "temp_recording.wav"
 
-        progress_placeholder = st.empty()
-        status_placeholder = st.empty()
-
         try:
-            # Recording
-            progress_placeholder.progress(0, text="🎤 Initializing...")
-            recorder = AudioRecorder()
-            start_time = datetime.utcnow()
+            with st.spinner("🎤 Recording..."):
+                recorder = AudioRecorder()
+                start_time = datetime.utcnow()
+                recorder.record(duration_seconds=5, output_file=output_file)
+                end_time = datetime.utcnow()
+                recorder.cleanup()
 
-            progress_placeholder.progress(25, text="🎤 Recording... Speak now!")
-            recorder.record(duration_seconds=5, output_file=output_file)
-            end_time = datetime.utcnow()
-            recorder.cleanup()
+            with st.spinner("🤖 Transcribing..."):
+                transcript = transcribe_audio(output_file)
+                if not transcript or transcript.startswith("Error:"):
+                    raise Exception(f"Transcription failed")
+                st.success(f"✅ Transcript: {transcript[:80]}...")
 
-            # Transcription
-            progress_placeholder.progress(50, text="🤖 Transcribing audio...")
-            transcript = transcribe_audio(output_file)
+            with st.spinner("✨ Summarizing..."):
+                simple_summary = summarize_transcript_simple(transcript)
+                clinical_data = summarize_transcript_clinical(transcript)
 
-            if not transcript or transcript.startswith("Error:"):
-                raise Exception(f"Transcription failed: {transcript}")
+            with st.spinner("💾 Saving..."):
+                segment = ConversationSegment(
+                    start_time=start_time,
+                    end_time=end_time,
+                    transcript=transcript
+                )
 
-            status_placeholder.success(f"✅ Transcript: *{transcript[:80]}...*")
+                summary = ConversationSummary(
+                    segment_id=str(segment.id),
+                    simple_summary=simple_summary,
+                    **clinical_data
+                )
 
-            # Summarization
-            progress_placeholder.progress(75, text="✨ Generating summaries...")
-            simple_summary = summarize_transcript_simple(transcript)
-            clinical_data = summarize_transcript_clinical(transcript)
+                save_conversation(segment, summary)
 
-            if "error" in clinical_data or simple_summary.startswith("Error:"):
-                raise Exception("Summarization failed")
-
-            # Save to database
-            progress_placeholder.progress(90, text="💾 Saving to database...")
-
-            segment = ConversationSegment(
-                start_time=start_time,
-                end_time=end_time,
-                transcript=transcript
-            )
-
-            summary = ConversationSummary(
-                segment_id=str(segment.id),
-                simple_summary=simple_summary,
-                **clinical_data
-            )
-
-            save_conversation(segment, summary)
-
-            # Complete
-            progress_placeholder.progress(100, text="✅ Complete!")
-            status_placeholder.success("🎉 Recording saved to dashboard!")
-
-            # Small delay before refresh
-            import time
-
-            time.sleep(1)
-            st.rerun()
+            st.success("🎉 Saved!")
+            os.remove(output_file)
 
         except Exception as e:
-            progress_placeholder.empty()
-            status_placeholder.error(f"❌ Error: {e}")
-        finally:
-            if os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                except:
-                    pass
+            st.error(f"❌ Error: {e}")
 
     st.divider()
 
-    # Info box
-    st.info("💡 This simulates recording a conversation and processing it through the full pipeline.")
-
+    st.info("💡 For continuous recording, go to **🎙️ Live Recording** page")
 
 # ========================================
 # MEDICATION DIALOG (COMPACT POPUP)

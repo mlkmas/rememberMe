@@ -4,7 +4,6 @@ import json
 import traceback
 from openai import OpenAI
 from dotenv import load_dotenv
-# --- UPDATED IMPORT ---
 from src.database import get_all_people
 
 load_dotenv()
@@ -15,82 +14,107 @@ except Exception as e:
     print(f"Error initializing OpenAI client: {e}")
     client = None
 
-# --- UPDATED PROMPT 1 (Simple) (No changes needed) ---
+# ========================================
+# CRITICAL: ANTI-HALLUCINATION PROMPTS
+# ========================================
+
 SIMPLE_SUMMARY_PROMPT = """
 You are summarizing a conversation for a person with dementia.
-Rules:
 
-**CRITICAL RULE: You MUST ONLY use information explicitly present in the transcript.**
-- Use simple, clear language (5th grade reading level)
-- **NEW RULE:** If you see a name that is in the "Known People" list, YOU MUST use their name and relationship (e.g., "Sarah, your daughter").
-- Focus on: who they talked to, what they discussed, future plans
-- Keep it under 100 words
-- Be warm and reassuring in tone
-- IMPORTANT: Do NOT include any people, events, or facts that are not explicitly mentioned in the transcript.
+**CRITICAL RULES - READ CAREFULLY:**
+1. **YOU MUST ONLY USE FACTS EXPLICITLY STATED IN THE TRANSCRIPT BELOW.**
+2. **DO NOT INVENT, ASSUME, OR ADD ANY INFORMATION NOT IN THE TRANSCRIPT.**
+3. **DO NOT mention people who are not explicitly named in the transcript.**
+4. **DO NOT describe events, plans, or conversations that are not explicitly mentioned.**
+5. **If the transcript is unclear or incomplete, say "The recording was unclear" - DO NOT FILL IN GAPS.**
+6. **If no one else is mentioned, write: "You were speaking alone."**
+7. **Use simple, clear language (5th grade level).**
+8. **Keep it under 50 words.**
+9. **Be warm but FACTUAL ONLY.**
 
-**Known People (Use these details):**
+**Known People (use ONLY if they appear in transcript):**
 {known_people}
 
-Transcript:
+**THE TRANSCRIPT (your ONLY source of truth):**
 {transcript}
 
-Generate simple summary:
+**Generate simple summary (FACTS ONLY, NO ASSUMPTIONS):**
 """
 
-# --- PROMPT 2 (Clinical) ---
 CLINICAL_JSON_SCHEMA = {
     "type": "object",
     "properties": {
         "participant": {
             "type": "string",
-            "description": "Name of the other person if mentioned, otherwise 'Unknown' or 'Patient speaking alone'. DO NOT INVENT A NAME."
+            "description": "ONLY include a name if explicitly mentioned in the transcript. If no one is mentioned, use 'Patient speaking alone'. DO NOT INVENT NAMES."
         },
         "topics_discussed": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "List of main topics, e.g., 'Family updates', 'Upcoming piano recital'"
+            "description": "List ONLY topics explicitly mentioned. If unclear, use ['Unclear recording']. DO NOT INVENT TOPICS."
         },
         "patient_mood": {
             "type": "string",
-            "description": "Analyze patient's words for emotion. Choose one: 'positive', 'neutral', 'anxious', 'confused', 'agitated', 'negative'."
+            "description": "Based ONLY on words in transcript. Choose: 'positive', 'neutral', 'anxious', 'confused', or 'unknown'. If unsure, use 'unknown'."
         },
         "cognitive_state": {
             "type": "string",
-            "description": "One-sentence summary of patient's performance, e.g., 'Engaged, but repeated questions about the date.'"
+            "description": "One sentence based ONLY on what was said. If transcript is too short or unclear, write: 'Insufficient data from recording'."
         },
         "key_concerns": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "List of clinical concerns explicitly mentioned, e.g., 'Repeated a question', 'Expressed physical pain'."
+            "description": "List ONLY concerns explicitly mentioned (e.g., 'Mentioned knee pain', 'Asked same question twice'). If none, use empty array. DO NOT INVENT CONCERNS."
         }
     },
     "required": ["participant", "topics_discussed", "patient_mood", "cognitive_state", "key_concerns"]
 }
 
-# --- FIX: UPDATE CLINICAL_SUMMARY_PROMPT to include the schema definition ---
 CLINICAL_SUMMARY_PROMPT = """
-You are a clinical assistant analyzing a conversation involving a dementia patient.
+You are a clinical assistant analyzing a conversation with a dementia patient.
 
-**CRITICAL RULE: You MUST ONLY use information explicitly present in the transcript. DO NOT HALLUCINATE OR INVENT any details. If information is not present, use 'Unknown' or an empty list.**
+**CRITICAL ANTI-HALLUCINATION RULES:**
+1. **YOU MUST ONLY USE INFORMATION EXPLICITLY STATED IN THE TRANSCRIPT BELOW.**
+2. **DO NOT INVENT, ASSUME, GUESS, OR ADD ANY INFORMATION.**
+3. **If information is missing or unclear, explicitly state "Unknown" or "Insufficient data".**
+4. **DO NOT infer relationships, events, or details not explicitly mentioned.**
+5. **DO NOT mention people who are not named in the transcript.**
+6. **If the transcript is very short or unclear, all fields should reflect this uncertainty.**
 
-Analyze the transcript and provide a clinical summary. Respond ONLY with a valid JSON object that adheres to the provided schema.
+**Example of WRONG (hallucinated) response:**
+- Participant: "Sarah (daughter)" ← WRONG if "Sarah" or "daughter" not in transcript
+- Topics: ["Thanksgiving plans"] ← WRONG if "Thanksgiving" not mentioned
+- Concerns: ["Confusion about identity"] ← WRONG if not explicitly shown
+
+**Example of CORRECT response:**
+- Participant: "Patient speaking alone" ← CORRECT if no one else mentioned
+- Topics: ["Unclear - short recording"] ← CORRECT if unclear
+- Concerns: [] ← CORRECT if nothing explicit
 
 **Schema:**
 {schema}
 
-**Transcript:**
+**THE TRANSCRIPT (your ONLY source of truth):**
 {transcript}
+
+**Generate clinical summary as JSON (STRICT FACTS ONLY):**
 """
 
 
-# --- FUNCTION 1 (Simple) (No changes needed) ---
+# ========================================
+# SUMMARIZATION FUNCTIONS
+# ========================================
+
 def summarize_transcript_simple(transcript: str) -> str:
-    if not client: return "Error: OpenAI client not initialized."
-    if not transcript: return "Error: No transcript."
+    """Generate simple patient-facing summary with strict anti-hallucination"""
+    if not client:
+        return "Error: OpenAI client not initialized."
+    if not transcript or len(transcript.strip()) < 10:
+        return "The recording was too short or unclear."
 
-    print("🧠 Generating simple summary...")
+    print("🧠 Generating simple summary (anti-hallucination mode)...")
 
-    # --- NEW: Get Known People (Step 1) ---
+    # Get known people
     try:
         people = get_all_people()
         if not people:
@@ -102,53 +126,76 @@ def summarize_transcript_simple(transcript: str) -> str:
     except Exception as e:
         print(f"Warning: Could not fetch people list. {e}")
         formatted_people = "Error fetching people list."
-    # --- END NEW ---
 
     try:
         completion = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",  # Use GPT-4 for better instruction following
             messages=[
                 {
                     "role": "system",
                     "content": SIMPLE_SUMMARY_PROMPT.format(
                         transcript=transcript,
-                        known_people=formatted_people  # <-- PASS IT IN
+                        known_people=formatted_people
                     )
                 }
-            ]
+            ],
+            temperature=0.1,  # Lower temperature = less creative = less hallucination
+            max_tokens=100  # Limit length to prevent elaboration
         )
-        summary = completion.choices[0].message.content
+        summary = completion.choices[0].message.content.strip()
+
+        # Validation: Check if summary is reasonable length
+        if len(summary) > 200:
+            print("⚠️ Summary too long, likely hallucinated. Truncating.")
+            summary = summary[:197] + "..."
+
         print("✅ Simple summary complete!")
         return summary
+
     except Exception as e:
         print(f"❌ Error during simple summarization: {e}")
-        return f"Error: {e}"
+        return "Error creating summary."
 
 
-# --- FUNCTION 2 (Clinical) ---
 def summarize_transcript_clinical(transcript: str) -> dict:
-    if not client: return {"error": "OpenAI client not initialized."}
-    if not transcript: return {"error": "No transcript provided."}
+    """Generate clinical summary with strict anti-hallucination"""
+    if not client:
+        return {"error": "OpenAI client not initialized."}
+    if not transcript or len(transcript.strip()) < 10:
+        return {
+            "participant": "Patient speaking alone",
+            "topics_discussed": ["Recording too short"],
+            "patient_mood": "unknown",
+            "cognitive_state": "Insufficient data - recording too brief",
+            "key_concerns": []
+        }
 
-    print("🩺 Generating clinical summary...")
+    print("🩺 Generating clinical summary (anti-hallucination mode)...")
 
-    # --- FIX: Inject the schema JSON as a string into the prompt ---
     prompt_content = CLINICAL_SUMMARY_PROMPT.format(
         transcript=transcript,
-        schema=json.dumps(CLINICAL_JSON_SCHEMA, indent=2)  # <-- Add this
+        schema=json.dumps(CLINICAL_JSON_SCHEMA, indent=2)
     )
 
     try:
         completion = client.chat.completions.create(
-            model="gpt-4-turbo",  # Use a model that fully supports JSON mode
-            # --- FIX: Remove the 'schema' key from response_format ---
+            model="gpt-4",  # GPT-4 for better instruction following
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": prompt_content}
-            ]
+            ],
+            temperature=0.1,  # Lower = less creative = less hallucination
+            max_tokens=300
         )
 
         clinical_data = json.loads(completion.choices[0].message.content)
+
+        # Validation: Ensure required fields exist
+        required_fields = ["participant", "topics_discussed", "patient_mood", "cognitive_state", "key_concerns"]
+        for field in required_fields:
+            if field not in clinical_data:
+                clinical_data[field] = "Unknown" if field != "key_concerns" else []
+
         print("✅ Clinical summary complete!")
         return clinical_data
 
@@ -157,23 +204,24 @@ def summarize_transcript_clinical(transcript: str) -> dict:
         traceback.print_exc()
         print(f"❌❌❌ ... END TRACEBACK ❌❌❌")
 
-        # Return a dict with the expected keys
         return {
             "participant": "Error",
-            "topics_discussed": [],
-            "patient_mood": "error",
+            "topics_discussed": ["Error processing"],
+            "patient_mood": "unknown",
             "cognitive_state": f"Error in summarization: {e}",
             "key_concerns": ["Error processing transcript"]
         }
 
 
 if __name__ == "__main__":
-    print("--- Testing Summarizer Module ---")
-    test_transcript = "Hi, this is Sarah. I'm just calling to say I love you. Patient: 'I love you too. My knee hurts.' ... Patient: 'What day is it?'"
+    print("--- Testing Anti-Hallucination Summarizer ---")
+
+    # Test with minimal transcript
+    test_transcript = "Is Sarah coming today? Where are we going? My knee hurts."
 
     print("\n--- Testing Simple Summary ---")
     simple_summary = summarize_transcript_simple(test_transcript)
-    print(simple_summary)
+    print(f"Result: {simple_summary}")
 
     print("\n--- Testing Clinical Summary ---")
     clinical_summary = summarize_transcript_clinical(test_transcript)

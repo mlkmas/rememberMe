@@ -1,7 +1,7 @@
 [project]
 name = "rememberme-ai"
-version = "0.1.0"
-description = "Conversation memory assistant for dementia patients"
+version = "2.0.0"
+description = "Advanced conversation memory assistant for dementia patients with AI features"
 authors = [
     {name = "malak"}
 ]
@@ -18,9 +18,12 @@ dependencies = [
     "livekit (>=1.0.0,<2.0.0)",
     "livekit-api (>=1.0.0,<2.0.0)",
     "requests (>=2.31.0,<3.0.0)",
-    "flask (>=3.0.0,<4.0.0)"
+    "flask (>=3.0.0,<4.0.0)",
+    "face-recognition (>=1.3.0,<2.0.0)",
+    "numpy (>=1.24.0,<2.0.0)",
+    "pandas (>=2.0.0,<3.0.0)",
+    "pillow (>=10.0.0,<11.0.0)"
 ]
-
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -10,14 +10,14 @@ from dotenv import load_dotenv
 import requests
 import numpy as np
 
-# Fix import path when running as script
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.transcriber import transcribe_audio
-from src.summarizer import summarize_transcript_simple, summarize_transcript_clinical
+from src.summarizer import summarize_transcript_simple, summarize_transcript_clinical, summarize_transcript_caregiver
 from src.schemas import ConversationSegment, ConversationSummary
-from src.database import save_conversation
+from src.database import save_conversation, get_settings
+from src.patient_assistant import answer_patient_question, detect_emergency
 
 load_dotenv()
 
@@ -26,10 +26,10 @@ LIVEKIT_URL = os.getenv("LIVEKIT_URL")
 
 class AudioReceiverAgent:
     """
-    Enhanced agent that:
-    1. Receives audio from LiveKit
-    2. Detects conversation boundaries
-    3. Transcribes and saves conversations
+    Enhanced agent with:
+    - Patient identity recognition
+    - Assistant mode for answering questions
+    - Emergency detection
     """
 
     def __init__(self):
@@ -37,125 +37,102 @@ class AudioReceiverAgent:
         self.audio_stream = None
         self.is_listening = False
 
-        # Audio buffer for recording
+        # Audio buffer
         self.audio_buffer = []
         self.is_recording = False
         self.silence_frames = 0
         self.speech_frames = 0
 
-        # Thresholds (tune these based on testing)
-        self.SILENCE_THRESHOLD = 50  # ~5 seconds of silence ends conversation
-        self.MIN_SPEECH_FRAMES = 10  # Need at least 10 frames to start
-        self.ENERGY_THRESHOLD = 300  # Lower = more sensitive (was 500)
-        self.SAMPLE_RATE = 48000  # LiveKit default sample rate
+        # Thresholds
+        self.SILENCE_THRESHOLD = 50
+        self.MIN_SPEECH_FRAMES = 10
+        self.ENERGY_THRESHOLD = 300
+        self.SAMPLE_RATE = 48000
 
-        # Create recordings directory
+        # NEW: Track speaker identity
+        self.current_speaker = "patient"  # Default to patient
+        self.participant_identities = {}  # Map participant.sid -> identity name
+
+        # NEW: Assistant mode
+        self.assistant_mode = False
+        self.last_emergency_check = datetime.now()
+
         Path("recordings").mkdir(exist_ok=True)
 
-        print("🎤 AudioReceiverAgent initialized")
+        print("🎤 AudioReceiverAgent initialized with patient tracking")
 
     def is_speech(self, audio_frame):
-        """
-        Detect if audio frame contains speech using energy detection
-
-        Args:
-            audio_frame: LiveKit AudioFrame object
-
-        Returns:
-            bool: True if speech detected
-        """
+        """Detect speech in audio frame"""
         try:
-            # FIXED: Access frame.data correctly for LiveKit's AudioFrame
-            # audio_frame is the actual frame, not an event
             if hasattr(audio_frame, 'data'):
                 audio_data_bytes = audio_frame.data
             else:
-                # Fallback if structure is different
                 return False
 
-            # Convert bytes to numpy array
             audio_data = np.frombuffer(audio_data_bytes, dtype=np.int16)
 
-            # Calculate RMS (Root Mean Square) energy
             if len(audio_data) > 0:
                 rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
             else:
                 rms = 0
 
-            # Return True if energy exceeds threshold
             return rms > self.ENERGY_THRESHOLD
 
         except Exception as e:
-            # Silently fail to avoid spam - just log once
             if not hasattr(self, '_error_logged'):
-                print(f"⚠️ Error in is_speech (will not repeat): {e}")
-                print(f"   Frame type: {type(audio_frame)}")
-                print(f"   Frame attributes: {dir(audio_frame)}")
+                print(f"⚠️ Error in is_speech: {e}")
                 self._error_logged = True
             return False
 
     def add_frame(self, audio_frame):
-        """
-        Add frame to buffer and detect conversation boundaries
-
-        Args:
-            audio_frame: LiveKit AudioFrame object
-
-        Returns:
-            bool: True if conversation ended and should be saved
-        """
+        """Add frame and detect conversation boundaries"""
         has_speech = self.is_speech(audio_frame)
 
         if has_speech:
             self.speech_frames += 1
             self.silence_frames = 0
 
-            # Start recording after detecting enough speech
             if not self.is_recording and self.speech_frames >= self.MIN_SPEECH_FRAMES:
                 self.is_recording = True
-                print("🎙️ Conversation started - Recording...")
+                speaker_name = self.current_speaker
+                print(f"🎙️ Conversation started - Recording ({speaker_name} speaking)...")
 
-            # Add frame to buffer if recording
             if self.is_recording:
-                # Store the frame data
                 if hasattr(audio_frame, 'data'):
                     self.audio_buffer.append(audio_frame.data)
 
         else:
-            # Silence detected
             if self.is_recording:
                 self.silence_frames += 1
-                # Still add silence frames to buffer for natural pauses
                 if hasattr(audio_frame, 'data'):
                     self.audio_buffer.append(audio_frame.data)
 
-                # End conversation after prolonged silence
                 if self.silence_frames >= self.SILENCE_THRESHOLD:
-                    print(f"🛑 Silence detected ({self.silence_frames} frames) - Ending conversation")
-                    return True  # Signal to save
+                    print(f"🛑 Silence detected - Ending conversation")
+                    return True
 
             self.speech_frames = 0
 
         return False
 
     async def save_conversation(self):
-        """Save, transcribe, summarize, and store conversation"""
+        """Save, transcribe, and analyze conversation"""
         if not self.audio_buffer or len(self.audio_buffer) < 10:
             print("⚠️ Buffer too short, skipping save")
             self.reset()
             return False
 
         try:
-            # Generate filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            audio_filename = f"recordings/conversation_{timestamp}.wav"
+            speaker_label = self.current_speaker
+            audio_filename = f"recordings/conversation_{speaker_label}_{timestamp}.wav"
 
-            print(f"💾 Saving conversation ({len(self.audio_buffer)} frames)")
+            print(f"💾 Saving conversation from {speaker_label} ({len(self.audio_buffer)} frames)")
 
-            # Save audio to WAV file
+            # Save audio
             with wave.open(audio_filename, 'wb') as wf:
-                wf.setnchannels(1)  # Mono
-                wf.setsampwidth(2)  # 16-bit
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
                 wf.setframerate(self.SAMPLE_RATE)
                 wf.writeframes(b''.join(self.audio_buffer))
 
@@ -172,9 +149,19 @@ class AudioReceiverAgent:
 
             print(f"📝 Transcript: {transcript[:100]}...")
 
-            # Summarize
+            # Check for emergency if in assistant mode
+            settings = get_settings()
+            if settings.get('assistant_mode_enabled', False):
+                is_emergency, emergency_type = detect_emergency(transcript)
+                if is_emergency:
+                    print(f"🚨🚨🚨 EMERGENCY DETECTED: {emergency_type} 🚨🚨🚨")
+                    # You could send notification here (email, SMS, etc.)
+                    # For now, just log it prominently
+
+            # Generate summaries
             print("✨ Generating summaries...")
             simple_summary = summarize_transcript_simple(transcript)
+            caregiver_summary = summarize_transcript_caregiver(transcript)  # NEW
             clinical_data = summarize_transcript_clinical(transcript)
 
             if "error" in clinical_data:
@@ -183,6 +170,8 @@ class AudioReceiverAgent:
                 return False
 
             print(f"✅ Summaries generated")
+            print(f"   Patient summary: {simple_summary[:50]}...")
+            print(f"   Caregiver summary: {caregiver_summary[:50]}...")
 
             # Save to database
             print("💾 Saving to database...")
@@ -190,12 +179,14 @@ class AudioReceiverAgent:
             segment = ConversationSegment(
                 start_time=datetime.now(),
                 end_time=datetime.now(),
-                transcript=transcript
+                transcript=transcript,
+                speaker_identity=speaker_label
             )
 
             summary = ConversationSummary(
                 segment_id=str(segment.id),
                 simple_summary=simple_summary,
+                caregiver_summary=caregiver_summary,  # NEW
                 **clinical_data
             )
 
@@ -215,7 +206,7 @@ class AudioReceiverAgent:
             return False
 
     def reset(self):
-        """Reset recorder state for next conversation"""
+        """Reset recorder state"""
         self.audio_buffer = []
         self.is_recording = False
         self.silence_frames = 0
@@ -223,68 +214,78 @@ class AudioReceiverAgent:
         print("🔄 Recorder reset, ready for next conversation")
 
     async def start(self, identity: str, token: str):
-        """Connects to the LiveKit room"""
+        """Connect to LiveKit room"""
         try:
             print(f"Connecting to {LIVEKIT_URL} as {identity}...")
             await self.room.connect(LIVEKIT_URL, token)
             print(f"✅ Successfully connected to room: {self.room.name}")
 
-            # Event handler for new tracks
             @self.room.on("track_subscribed")
             def on_track_subscribed(track: rtc.Track, publication: rtc.TrackPublication,
                                     participant: rtc.RemoteParticipant):
-                print(f"🎵 Track subscribed event - Kind: {track.kind}, Participant: {participant.identity}")
-                if track.kind == rtc.TrackKind.KIND_AUDIO:
-                    print(f"   ✅ Audio track confirmed from: {participant.identity}")
-                    asyncio.ensure_future(self.process_audio_track(track))
+                # Track participant identity
+                participant_name = participant.identity
+                self.participant_identities[participant.sid] = participant_name
 
-            # Check for existing participants
-            print(f"Current participants in room: {len(self.room.remote_participants)}")
+                # Determine if this is patient or caregiver
+                if "patient" in participant_name.lower():
+                    self.current_speaker = "patient"
+                elif "caregiver" in participant_name.lower() or "admin" in participant_name.lower():
+                    self.current_speaker = "caregiver"
+                else:
+                    self.current_speaker = participant_name
+
+                print(f"🎵 Track from: {participant_name} (identified as: {self.current_speaker})")
+
+                if track.kind == rtc.TrackKind.KIND_AUDIO:
+                    asyncio.ensure_future(self.process_audio_track(track, participant))
+
+            # Check existing participants
             for participant in self.room.remote_participants.values():
-                print(f"  - Participant: {participant.identity}")
+                participant_name = participant.identity
+                self.participant_identities[participant.sid] = participant_name
+
+                print(f"  - Existing participant: {participant_name}")
                 for track_pub in participant.track_publications.values():
                     if track_pub.track and track_pub.kind == rtc.TrackKind.KIND_AUDIO:
-                        print(f"    Found existing audio track: {track_pub.sid}")
-                        asyncio.ensure_future(self.process_audio_track(track_pub.track))
+                        asyncio.ensure_future(self.process_audio_track(track_pub.track, participant))
 
         except Exception as e:
             print(f"❌ Error connecting to LiveKit: {e}")
             import traceback
             traceback.print_exc()
 
-    async def process_audio_track(self, track: rtc.Track):
+    async def process_audio_track(self, track: rtc.Track, participant: rtc.RemoteParticipant):
         """Process incoming audio stream"""
         try:
-            print(f"📡 Starting to process audio track: {track.sid}")
+            participant_name = participant.identity
 
-            # Create audio stream from track
+            # Update current speaker
+            if "patient" in participant_name.lower():
+                self.current_speaker = "patient"
+            elif "caregiver" in participant_name.lower():
+                self.current_speaker = "caregiver"
+            else:
+                self.current_speaker = participant_name
+
+            print(f"📡 Processing audio from: {participant_name} (speaker: {self.current_speaker})")
+
             audio_stream = rtc.AudioStream(track)
             self.is_listening = True
 
-            print("🎧 Audio stream active. Listening for speech...")
-            print(f"   Energy threshold: {self.ENERGY_THRESHOLD}")
-            print(f"   Minimum speech frames: {self.MIN_SPEECH_FRAMES}")
-            print(f"   Silence threshold: {self.SILENCE_THRESHOLD}")
-
             frame_count = 0
 
-            # Process each audio frame
             async for event in audio_stream:
                 frame_count += 1
 
-                # Show progress every 100 frames (about every 2 seconds)
                 if frame_count % 100 == 0:
                     status = "🎙️ RECORDING" if self.is_recording else "👂 Listening"
-                    print(f"{status} - Frames processed: {frame_count}, Buffer: {len(self.audio_buffer)}")
+                    print(
+                        f"{status} ({self.current_speaker}) - Frames: {frame_count}, Buffer: {len(self.audio_buffer)}")
 
-                # The event contains the frame
-                # Access the actual audio frame data
                 audio_frame = event.frame
-
-                # Add frame to buffer and check if conversation ended
                 should_save = self.add_frame(audio_frame)
 
-                # Save if conversation ended
                 if should_save:
                     await self.save_conversation()
 
@@ -294,7 +295,7 @@ class AudioReceiverAgent:
             traceback.print_exc()
 
     async def stop(self):
-        """Disconnects from the room"""
+        """Disconnect from room"""
         if self.room.connection_state != rtc.ConnectionState.CONN_DISCONNECTED:
             print("Disconnecting from room...")
             await self.room.disconnect()
@@ -302,9 +303,8 @@ class AudioReceiverAgent:
             print("✅ Disconnected")
 
 
-# --- Helper function to get token ---
 def get_token(identity: str) -> str:
-    """Gets access token from token server"""
+    """Get access token from token server"""
     try:
         print(f"🎫 Requesting token for: {identity}")
         res = requests.get(f"http://localhost:5000/get_token?identity={identity}", timeout=5)
@@ -321,36 +321,29 @@ def get_token(identity: str) -> str:
         return None
 
 
-# --- Main function for testing ---
 async def main():
     print("=" * 50)
-    print("🎙️ RememberMe LiveKit Agent")
+    print("🎙️ RememberMe LiveKit Agent (Patient Tracking)")
     print("=" * 50)
 
-    # Get token
     token = get_token(identity="rememberme-agent")
     if not token:
         print("❌ Failed to get token")
         return
 
-    # Create and start agent
     agent = AudioReceiverAgent()
     try:
         await agent.start(identity="rememberme-agent", token=token)
 
         print("\n" + "=" * 50)
-        print("✅ Agent is running and listening for audio")
+        print("✅ Agent running with patient identity tracking")
         print("=" * 50)
-        print("\nTo test:")
-        print("1. Go to: http://localhost:8501")
-        print("2. Navigate to '🎙️ Live Recording' page")
-        print("3. Click 'Open LiveKit Room'")
-        print("4. Allow microphone and start speaking!")
-        print("5. Watch this terminal for processing logs")
+        print("\nPatient naming guide:")
+        print("  - Name participants 'patient' for patient tracking")
+        print("  - Name participants 'caregiver' for caregiver tracking")
         print("\nPress Ctrl+C to stop")
         print("=" * 50 + "\n")
 
-        # Keep running indefinitely
         while True:
             await asyncio.sleep(1)
 

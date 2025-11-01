@@ -1,77 +1,56 @@
 # pages/3_Admin_Tools.py
 import streamlit as st
-from src.audio_recorder import AudioRecorder
-from src.transcriber import transcribe_audio
-from src.summarizer import summarize_transcript_simple, summarize_transcript_clinical
-import os
 from datetime import datetime, time, date, timedelta
-from src.schemas import Medication, ConversationSegment, ConversationSummary, PersonProfile
+from src.schemas import Medication, PersonProfile
 from src.database import (
     save_conversation, add_medication, get_all_medications, update_medication,
-    delete_medication, add_person, get_all_people, delete_person, update_person
+    delete_medication, add_person, get_all_people, delete_person, update_person,
+    get_settings, update_settings
 )
 from pathlib import Path
 import face_recognition
 import numpy as np
-import asyncio #
-from src.livekit_client import get_token, AudioReceiverAgent #
+import requests
 
-#Reset dialog states on page load
+# Reset dialog states on page load
 if 'page_loaded_admin' not in st.session_state:
     st.session_state.page_loaded_admin = True
     st.session_state.show_med_dialog = False
     st.session_state.show_person_dialog = False
-    st.session_state.show_medication_dialog = False
 
 st.set_page_config(page_title="Admin Tools", page_icon="🛠️", layout="wide")
 
-# Custom CSS for modern design
+# Custom CSS
 st.markdown("""
 <style>
-    /* Main container styling */
-    .stApp {
-        background-color: #f8f9fa;
-    }
-
-    /* Card styling */
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        background-color: white;
-        padding: 1rem;
+    .settings-card {
+        background: white;
+        padding: 20px;
         border-radius: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 10px 0;
     }
-
-    /* Button styling */
-    .stButton button {
-        border-radius: 8px;
-        font-weight: 500;
-        transition: all 0.3s ease;
+    .status-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 8px;
     }
-
-    .stButton button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    .status-active {
+        background: #10b981;
     }
-
-    /* Header styling */
-    h1, h2, h3 {
-        color: #1f2937;
-        font-weight: 600;
-    }
-
-    /* Divider styling */
-    hr {
-        margin: 1.5rem 0;
-        border-color: #e5e7eb;
+    .status-inactive {
+        background: #ef4444;
     }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🛠️ Admin & Caregiver Tools")
-st.caption("Manage medications, people profiles, and test recording features")
+st.caption("Manage medications, people, settings, and recordings")
 st.divider()
 
-# --- Initialize Session State for Dialogs ---
+# Initialize session states
 if 'show_med_dialog' not in st.session_state:
     st.session_state.show_med_dialog = False
 if 'show_person_dialog' not in st.session_state:
@@ -82,41 +61,135 @@ if 'editing_med_data' not in st.session_state:
     st.session_state.editing_med_data = None
 
 
-# --- Helper Functions for Dialog Control ---
 def open_med_dialog(med_id=None, med_data=None):
-    """Open medication dialog for add or edit"""
     st.session_state.show_med_dialog = True
-    st.session_state.show_person_dialog = False  # Ensure person dialog is closed
+    st.session_state.show_person_dialog = False
     st.session_state.editing_med_id = med_id
     st.session_state.editing_med_data = med_data
 
 
 def close_med_dialog():
-    """Close medication dialog and reset state"""
     st.session_state.show_med_dialog = False
     st.session_state.editing_med_id = None
     st.session_state.editing_med_data = None
 
 
 def open_person_dialog():
-    """Open person dialog"""
     st.session_state.show_person_dialog = True
-    st.session_state.show_med_dialog = False  # Ensure med dialog is closed
+    st.session_state.show_med_dialog = False
 
 
 def close_person_dialog():
-    """Close person dialog"""
     st.session_state.show_person_dialog = False
 
 
-# --- UI Layout ---
+# ========================================
+# ROW 1: SYSTEM SETTINGS & LIVEKIT CONTROL
+# ========================================
+st.markdown("### ⚙️ System Settings")
+
+settings = get_settings()
+
+col_settings1, col_settings2 = st.columns(2)
+
+with col_settings1:
+    with st.container(border=True):
+        st.markdown("**📅 Daily Recap Settings**")
+
+        recap_enabled = st.toggle(
+            "Enable Automatic Daily Recap",
+            value=settings.get('daily_recap_enabled', True),
+            key="recap_enabled_toggle"
+        )
+
+        recap_time_str = settings.get('daily_recap_time', '19:00')
+        try:
+            recap_hour, recap_minute = map(int, recap_time_str.split(':'))
+            default_recap_time = time(recap_hour, recap_minute)
+        except:
+            default_recap_time = time(19, 0)
+
+        recap_time = st.time_input(
+            "Recap Time",
+            value=default_recap_time,
+            help="Time when daily recap will be automatically generated"
+        )
+
+        if st.button("💾 Save Recap Settings", use_container_width=True):
+            update_settings({
+                'daily_recap_enabled': recap_enabled,
+                'daily_recap_time': recap_time.strftime('%H:%M')
+            })
+            st.success("✅ Recap settings saved!")
+            st.rerun()
+
+with col_settings2:
+    with st.container(border=True):
+        st.markdown("**🎤 LiveKit Recording Control**")
+
+        # Check if token server is running
+        token_server_running = False
+        try:
+            response = requests.get("http://localhost:5000/health", timeout=2)
+            token_server_running = response.status_code == 200
+        except:
+            pass
+
+        # Display status
+        status_class = "status-active" if token_server_running else "status-inactive"
+        status_text = "Online" if token_server_running else "Offline"
+        st.markdown(f'<span class="status-indicator {status_class}"></span>Token Server: {status_text}',
+                    unsafe_allow_html=True)
+
+        livekit_active = settings.get('livekit_session_active', False)
+
+        if not token_server_running:
+            st.warning("⚠️ Token server must be running to start recording")
+            st.code("poetry run python src/token_server.py", language="bash")
+        else:
+            col_start, col_stop = st.columns(2)
+
+            with col_start:
+                if st.button("🟢 Start Recording", use_container_width=True,
+                             disabled=livekit_active, type="primary"):
+                    update_settings({'livekit_session_active': True})
+                    st.success("✅ Recording session started!")
+                    st.info("Patient can now see the recording interface")
+                    st.rerun()
+
+            with col_stop:
+                if st.button("🔴 Stop Recording", use_container_width=True,
+                             disabled=not livekit_active):
+                    update_settings({'livekit_session_active': False})
+                    st.success("✅ Recording session stopped")
+                    st.rerun()
+
+        # Assistant mode toggle
+        st.divider()
+
+        assistant_enabled = st.toggle(
+            "🤖 Enable AI Assistant Mode",
+            value=settings.get('assistant_mode_enabled', False),
+            help="Allows patient to ask questions via voice",
+            key="assistant_toggle"
+        )
+
+        if st.button("💾 Save Assistant Setting", use_container_width=True):
+            update_settings({'assistant_mode_enabled': assistant_enabled})
+            st.success("✅ Assistant setting saved!")
+            st.rerun()
+
+st.divider()
+
+# ========================================
+# ROW 2: MEDICATIONS, PEOPLE, SCHEDULER STATUS
+# ========================================
 col1, col2, col3 = st.columns([1, 1, 1], gap="medium")
 
 # ========================================
 # COLUMN 1: MEDICATIONS
 # ========================================
 with col1:
-    # Header with add button
     header_col1, header_col2 = st.columns([2, 1])
     with header_col1:
         st.markdown("### 💊 Medications")
@@ -127,17 +200,15 @@ with col1:
 
     st.divider()
 
-    # Display Current Medications
     medications = get_all_medications()
 
     if not medications:
-        st.info("📭 No medications added yet.\nClick '➕ Add' to create one.")
+        st.info("📭 No medications added yet.")
     else:
         for idx, med in enumerate(medications):
-            med_id = str(med.get('_id'))
+            med_id = str(med.get('_id') or med.get('id'))
 
             with st.container():
-                # Create a nice card layout
                 st.markdown(f"""
                 <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                             padding: 12px; border-radius: 8px; margin-bottom: 10px;'>
@@ -150,14 +221,12 @@ with col1:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Details section
                 info_col, btn_col = st.columns([3, 1])
 
                 with info_col:
                     st.caption(f"💊 **Dosage:** {med.get('dosage', 'N/A')}")
                     st.caption(f"🎯 **Purpose:** {med.get('purpose', 'N/A')}")
 
-                    # Schedule info with icons
                     stype = med.get('schedule_type', 'Daily')
                     if stype == 'Weekly':
                         days = med.get('days_of_week', [])
@@ -171,7 +240,6 @@ with col1:
                         st.caption("📅 Daily")
 
                 with btn_col:
-                    # Stack buttons vertically instead of side-by-side
                     if st.button("✏️ ", key=f"edit_med_{med_id}", use_container_width=True):
                         open_med_dialog(med_id, med)
                         st.rerun()
@@ -181,13 +249,12 @@ with col1:
                         st.rerun()
 
                 if idx < len(medications) - 1:
-                    st.markdown("<hr style='margin: 10px 0; border-color: #e5e7eb;'>", unsafe_allow_html=True)
+                    st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
 # ========================================
 # COLUMN 2: PEOPLE
 # ========================================
 with col2:
-    # Header with add button
     header_col1, header_col2 = st.columns([2, 1])
     with header_col1:
         st.markdown("### 👥 People")
@@ -201,10 +268,10 @@ with col2:
     people = get_all_people()
 
     if not people:
-        st.info("📭 No people profiles yet.\nClick '➕ Add' to create one.")
+        st.info("📭 No people profiles yet.")
     else:
         for idx, person in enumerate(people):
-            person_id = str(person.get('_id'))
+            person_id = str(person.get('_id') or person.get('id'))
 
             with st.container():
                 p_img_col, p_info_col, p_btn_col = st.columns([1, 3, 1])
@@ -231,100 +298,53 @@ with col2:
                         st.rerun()
 
                 if idx < len(people) - 1:
-                    st.markdown("<hr style='margin: 10px 0; border-color: #e5e7eb;'>", unsafe_allow_html=True)
+                    st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
 # ========================================
-# COLUMN 3: TEST RECORDING
-# ========================================
-# ========================================
-# COLUMN 3: LIVEKIT TEST
+# COLUMN 3: SCHEDULER STATUS
 # ========================================
 with col3:
-    st.markdown("### 🎙️ LiveKit Test")
-    st.caption("Test real-time audio streaming")
+    st.markdown("### 🤖 Background Services")
     st.divider()
 
-    # Check if token server is running
-    token_server_status = "🔴 Offline"
-    try:
-        import requests
+    with st.container(border=True):
+        st.markdown("**Background Scheduler**")
+        st.caption("Handles automatic medication reminders and daily recap")
 
-        response = requests.get("http://localhost:5000/get_token?identity=test", timeout=2)
-        if response.status_code == 200:
-            token_server_status = "🟢 Online"
-    except:
-        pass
+        st.info("Start the scheduler in a separate terminal:")
+        st.code("poetry run python src/background_scheduler.py", language="bash")
 
-    st.markdown(f"**Token Server:** {token_server_status}")
-
-    if token_server_status == "🔴 Offline":
-        st.warning("⚠️ Token server not running")
-        st.code("poetry run python src/token_server.py", language="bash")
+        st.markdown("**What it does:**")
+        st.markdown("- ⏰ Sends medication reminders at scheduled times")
+        st.markdown("- 🌅 Generates daily recap at configured time")
+        st.markdown("- 📁 Saves audio to `scheduled_audio/` folder")
 
     st.divider()
 
-    st.markdown("##### Quick Recording Test")
+    with st.container(border=True):
+        st.markdown("**LiveKit Agent**")
+        st.caption("Processes live voice conversations")
 
-    if st.button("🔴 Record 5 Seconds (Old Method)", use_container_width=True, type="secondary"):
-        # Keep your existing 5-second test code here
-        output_file = "temp_recording.wav"
+        st.info("Start the agent in a separate terminal:")
+        st.code("poetry run python src/livekit_client.py", language="bash")
 
-        try:
-            with st.spinner("🎤 Recording..."):
-                recorder = AudioRecorder()
-                start_time = datetime.utcnow()
-                recorder.record(duration_seconds=5, output_file=output_file)
-                end_time = datetime.utcnow()
-                recorder.cleanup()
+        st.markdown("**What it does:**")
+        st.markdown("- 🎙️ Records patient conversations")
+        st.markdown("- 🤖 Transcribes and summarizes")
+        st.markdown("- 🚨 Detects emergencies")
+        st.markdown("- 💾 Saves to database")
 
-            with st.spinner("🤖 Transcribing..."):
-                transcript = transcribe_audio(output_file)
-                if not transcript or transcript.startswith("Error:"):
-                    raise Exception(f"Transcription failed")
-                st.success(f"✅ Transcript: {transcript[:80]}...")
-
-            with st.spinner("✨ Summarizing..."):
-                simple_summary = summarize_transcript_simple(transcript)
-                clinical_data = summarize_transcript_clinical(transcript)
-
-            with st.spinner("💾 Saving..."):
-                segment = ConversationSegment(
-                    start_time=start_time,
-                    end_time=end_time,
-                    transcript=transcript
-                )
-
-                summary = ConversationSummary(
-                    segment_id=str(segment.id),
-                    simple_summary=simple_summary,
-                    **clinical_data
-                )
-
-                save_conversation(segment, summary)
-
-            st.success("🎉 Saved!")
-            os.remove(output_file)
-
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
-
-    st.divider()
-
-    st.info("💡 For continuous recording, go to **🎙️ Live Recording** page")
 
 # ========================================
-# MEDICATION DIALOG (COMPACT POPUP)
+# MEDICATION DIALOG
 # ========================================
-@st.dialog("💊 Medication", width="small")  # Changed to "small" for compact size
+@st.dialog("💊 Medication", width="small")
 def medication_dialog():
-    """Compact dialog popup for adding/editing medications"""
-
     is_editing = st.session_state.editing_med_id is not None
     med_data = st.session_state.editing_med_data or {}
 
     st.markdown(f"**{'Edit' if is_editing else 'Add'} Medication**")
 
-    # Compact form layout
     med_name = st.text_input("Name", value=med_data.get('name', ''), placeholder="e.g., Ibuprofen")
 
     col_dose, col_time = st.columns(2)
@@ -341,14 +361,11 @@ def medication_dialog():
 
     med_purpose = st.text_input("Purpose", value=med_data.get('purpose', ''), placeholder="Pain relief")
 
-    # Schedule type - more compact
     schedule_options = ["Daily", "Weekly", "One-Time"]
     current_schedule = med_data.get('schedule_type', 'Daily')
     schedule_index = schedule_options.index(current_schedule) if current_schedule in schedule_options else 0
-
     schedule_type = st.selectbox("Schedule", options=schedule_options, index=schedule_index)
 
-    # Conditional fields
     days_of_week = None
     specific_date = None
 
@@ -358,7 +375,6 @@ def medication_dialog():
             options=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
             default=[d[:3] for d in med_data.get('days_of_week', [])]
         )
-        # Convert back to full names
         day_map = {"Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday",
                    "Thu": "Thursday", "Fri": "Friday", "Sat": "Saturday", "Sun": "Sunday"}
         days_of_week = [day_map[d] for d in days_of_week]
@@ -370,7 +386,6 @@ def medication_dialog():
                 default_date = med_data['specific_date'].date()
         specific_date = st.date_input("Date", value=default_date)
 
-    # Action buttons
     col_save, col_cancel = st.columns(2)
 
     with col_save:
@@ -404,7 +419,7 @@ def medication_dialog():
                     add_medication(new_med)
                     st.success(f"✅ Added!")
 
-                close_med_dialog()  # Use helper function
+                close_med_dialog()
                 st.rerun()
 
             except Exception as e:
@@ -412,17 +427,15 @@ def medication_dialog():
 
     with col_cancel:
         if st.button("Cancel", use_container_width=True):
-            close_med_dialog()  # Use helper function
+            close_med_dialog()
             st.rerun()
 
 
 # ========================================
-# PERSON DIALOG (COMPACT POPUP)
+# PERSON DIALOG
 # ========================================
-@st.dialog("👤 Person Profile", width="small")  # Changed to "small"
+@st.dialog("👤 Person Profile", width="small")
 def person_dialog():
-    """Compact dialog popup for adding people"""
-
     st.markdown("**Add Person Profile**")
 
     person_name = st.text_input("Name", placeholder="Sarah")
@@ -480,7 +493,7 @@ def person_dialog():
                     update_person(person_id, {"face_encoding": face_encoding_list})
 
                 st.success(f"✅ Added {person_name}!")
-                close_person_dialog()  # Use helper function
+                close_person_dialog()
                 st.rerun()
 
             except Exception as e:
@@ -488,12 +501,12 @@ def person_dialog():
 
     with col_cancel:
         if st.button("Cancel", use_container_width=True):
-            close_person_dialog()  # Use helper function
+            close_person_dialog()
             st.rerun()
 
 
 # ========================================
-# SHOW DIALOGS IF TRIGGERED
+# SHOW DIALOGS
 # ========================================
 if st.session_state.show_med_dialog:
     medication_dialog()

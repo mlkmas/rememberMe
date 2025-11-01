@@ -16,20 +16,24 @@ st.markdown(
     dementia patients and their caregivers.
 
     This application provides multiple views:
-    
+
     ### 1. 🩺 Caregiver Dashboard
-    - A comprehensive view for caregivers to monitor conversation timelines,
-      track cognitive patterns, and manage patient information.
-      
+    - Comprehensive view for caregivers to monitor conversation timelines
+    - Track cognitive patterns and manage patient information
+    - AI Chatbot to ask questions about patient's day/week
+
     ### 2. 😊 Patient View
-    - A simple, voice-activated interface for the patient to get daily recaps
-      and reminders about their day.
+    - Simple voice-activated interface for daily recaps and reminders
+    - AI Assistant for answering questions and emergency detection
+    - Automatic medication reminders at scheduled times
 
     ### 3. 🛠️ Admin Tools
-    - A page for caregivers to add/manage medications and people.
-    
-    ### 4. 🤔 Who Is This? (NEW)
-    - A live tool to help the patient recognize who they are talking to.
+    - Manage medications and people profiles
+    - Control LiveKit recording sessions
+    - Configure automatic daily recap schedule
+
+    ### 4. 🤔 Who Is This?
+    - Live facial recognition to help identify people
 
     **👈 Select a page from the sidebar to get started!**
     """

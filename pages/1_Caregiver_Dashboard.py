@@ -2,86 +2,15 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from src.database import get_all_conversations
+from src.caregiver_chatbot import answer_caregiver_question
 import pandas as pd
 import calendar
 
-# --- Page Config ---
 st.set_page_config(page_title="Caregiver Dashboard", page_icon="🩺", layout="wide")
 
-# Custom CSS for beautiful design
+# Custom CSS
 st.markdown("""
 <style>
-    /* Calendar styling */
-    .calendar-container {
-        background: white;
-        padding: 20px;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-
-    .calendar-header {
-        font-size: 24px;
-        font-weight: 700;
-        color: #1f2937;
-        margin-bottom: 20px;
-    }
-
-    .day-cell {
-        background: white;
-        border: 2px solid #e5e7eb;
-        border-radius: 10px;
-        padding: 10px;
-        text-align: center;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        min-height: 100px;
-        position: relative;
-    }
-
-    .day-cell:hover {
-        border-color: #667eea;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
-    }
-
-    .day-number {
-        font-size: 18px;
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 8px;
-    }
-
-    .day-today {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white !important;
-        border-color: #667eea;
-    }
-
-    .day-today .day-number {
-        color: white !important;
-    }
-
-    .day-has-data {
-        background: #f0f9ff;
-        border-color: #3b82f6;
-    }
-
-    .conversation-badge {
-        display: inline-block;
-        background: #3b82f6;
-        color: white;
-        border-radius: 12px;
-        padding: 2px 8px;
-        font-size: 12px;
-        font-weight: 600;
-        margin-top: 5px;
-    }
-
-    .mood-indicator {
-        font-size: 20px;
-        margin-top: 5px;
-    }
-
     .stats-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 20px;
@@ -89,26 +18,44 @@ st.markdown("""
         color: white;
         text-align: center;
     }
-
     .stats-number {
         font-size: 36px;
         font-weight: 700;
         margin-bottom: 5px;
     }
-
     .stats-label {
         font-size: 14px;
         opacity: 0.9;
     }
+    .chatbot-container {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    .chat-message {
+        background: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        margin: 8px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .chat-user {
+        background: #e3f2fd;
+        text-align: right;
+    }
+    .chat-assistant {
+        background: #f1f8e9;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Header ---
+# Header
 st.title("🩺 Caregiver Dashboard")
-st.caption("Monitor conversations, patterns, and cognitive health")
+st.caption("Monitor conversations, patterns, and ask questions")
 st.divider()
 
-# --- Initialize Session State ---
+# Initialize session state
 if 'selected_date' not in st.session_state:
     st.session_state.selected_date = None
 if 'show_date_dialog' not in st.session_state:
@@ -118,17 +65,15 @@ if 'current_month' not in st.session_state:
 if 'current_year' not in st.session_state:
     st.session_state.current_year = datetime.now().year
 if 'view_mode' not in st.session_state:
-    st.session_state.view_mode = "month"  # month, week, or list
+    st.session_state.view_mode = "month"
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'show_chatbot' not in st.session_state:
+    st.session_state.show_chatbot = False
 
-# --- Refresh Button ---
-if st.button("🔄 Refresh Data", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
-
-# --- Fetch Data ---
+# Fetch data
 all_summaries = get_all_conversations()
 
-# Organize data by date
 conversations_by_date = {}
 for summary in all_summaries:
     date = summary.get('generated_at', datetime.now()).date()
@@ -136,18 +81,100 @@ for summary in all_summaries:
         conversations_by_date[date] = []
     conversations_by_date[date].append(summary)
 
-# --- View Mode Selector ---
+# ========================================
+# TOP BAR: Chatbot Toggle + Refresh
+# ========================================
+col_chat_toggle, col_refresh = st.columns([3, 1])
+
+with col_chat_toggle:
+    if st.button("💬 AI Assistant" if not st.session_state.show_chatbot else "📊 Hide Assistant",
+                 use_container_width=True, type="primary"):
+        st.session_state.show_chatbot = not st.session_state.show_chatbot
+        st.rerun()
+
+with col_refresh:
+    if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+# ========================================
+# CHATBOT INTERFACE (if enabled)
+# ========================================
+if st.session_state.show_chatbot:
+    st.markdown("### 🤖 AI Assistant")
+    st.caption("Ask me anything about the patient's recent conversations")
+
+    with st.container():
+        st.markdown('<div class="chatbot-container">', unsafe_allow_html=True)
+
+        # Display chat history
+        if st.session_state.chat_history:
+            for msg in st.session_state.chat_history:
+                if msg['role'] == 'user':
+                    st.markdown(f'<div class="chat-message chat-user">👤 You: {msg["content"]}</div>',
+                                unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="chat-message chat-assistant">🤖 Assistant: {msg["content"]}</div>',
+                                unsafe_allow_html=True)
+        else:
+            st.info(
+                "Ask me questions like:\n- How has the patient's mood been this week?\n- Did they mention any family members?\n- What concerns came up recently?")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Input for new question
+        col_input, col_send = st.columns([4, 1])
+
+        with col_input:
+            user_question = st.text_input("Your question:", key="chatbot_input",
+                                          placeholder="How has the patient been feeling?")
+
+        with col_send:
+            if st.button("Send", use_container_width=True, type="primary"):
+                if user_question.strip():
+                    # Add user message
+                    st.session_state.chat_history.append({
+                        'role': 'user',
+                        'content': user_question
+                    })
+
+                    # Get AI response
+                    with st.spinner("🤔 Analyzing data..."):
+                        answer = answer_caregiver_question(user_question)
+
+                    # Add assistant response
+                    st.session_state.chat_history.append({
+                        'role': 'assistant',
+                        'content': answer
+                    })
+
+                    st.rerun()
+
+        # Clear chat button
+        if st.session_state.chat_history:
+            if st.button("🗑️ Clear Chat", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
+
+    st.divider()
+
+# ========================================
+# VIEW MODE SELECTOR
+# ========================================
 col_view1, col_view2, col_view3 = st.columns(3)
+
 with col_view1:
     if st.button("📅 Month View", use_container_width=True,
                  type="primary" if st.session_state.view_mode == "month" else "secondary"):
         st.session_state.view_mode = "month"
         st.rerun()
+
 with col_view2:
     if st.button("📊 Week View", use_container_width=True,
                  type="primary" if st.session_state.view_mode == "week" else "secondary"):
         st.session_state.view_mode = "week"
         st.rerun()
+
 with col_view3:
     if st.button("📋 List View", use_container_width=True,
                  type="primary" if st.session_state.view_mode == "list" else "secondary"):
@@ -160,7 +187,6 @@ st.divider()
 # MONTH VIEW
 # ========================================
 if st.session_state.view_mode == "month":
-    # Month/Year Navigation
     nav_col1, nav_col2, nav_col3 = st.columns([1, 3, 1])
 
     with nav_col1:
@@ -186,11 +212,10 @@ if st.session_state.view_mode == "month":
                 st.session_state.current_month += 1
             st.rerun()
 
-    # Generate calendar
+    # Calendar grid
     cal = calendar.monthcalendar(st.session_state.current_year, st.session_state.current_month)
-
-    # Day headers
     day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
     header_cols = st.columns(7)
     for idx, day_name in enumerate(day_names):
         with header_cols[idx]:
@@ -198,7 +223,6 @@ if st.session_state.view_mode == "month":
                 f"<div style='text-align: center; font-weight: 600; color: #6b7280; margin-bottom: 10px;'>{day_name}</div>",
                 unsafe_allow_html=True)
 
-    # Calendar grid
     today = datetime.now().date()
 
     for week in cal:
@@ -206,20 +230,14 @@ if st.session_state.view_mode == "month":
         for idx, day in enumerate(week):
             with week_cols[idx]:
                 if day == 0:
-                    # Empty cell
                     st.markdown("<div style='min-height: 100px;'></div>", unsafe_allow_html=True)
                 else:
-                    # Create date object
                     date_obj = datetime(st.session_state.current_year, st.session_state.current_month, day).date()
-
-                    # Check if this date has conversations
                     day_conversations = conversations_by_date.get(date_obj, [])
 
-                    # Determine styling
                     is_today = date_obj == today
                     has_data = len(day_conversations) > 0
 
-                    # Calculate mood for the day
                     if day_conversations:
                         moods = [c.get('patient_mood', '').lower() for c in day_conversations]
                         positive_count = sum(1 for m in moods if m == 'positive')
@@ -232,35 +250,18 @@ if st.session_state.view_mode == "month":
                     else:
                         mood_emoji = ""
 
-                    # Create cell
-                    cell_class = "day-cell"
-                    if is_today:
-                        cell_class += " day-today"
-                    elif has_data:
-                        cell_class += " day-has-data"
-
-                    # Button to open dialog
-                    if st.button(
-                            f"{day}",
-                            key=f"day_{date_obj}",
-                            use_container_width=True,
-                            disabled=not has_data and not is_today
-                    ):
+                    if st.button(f"{day}", key=f"day_{date_obj}", use_container_width=True,
+                                 disabled=not has_data and not is_today):
                         st.session_state.selected_date = date_obj
                         st.session_state.show_date_dialog = True
                         st.rerun()
 
-                    # Show badges
                     if has_data:
                         st.markdown(
-                            f"<div style='text-align: center;'><span class='conversation-badge'>{len(day_conversations)} 💬</span></div>",
+                            f"<div style='text-align: center;'><span style='background: #3b82f6; color: white; border-radius: 12px; padding: 2px 8px; font-size: 12px;'>{len(day_conversations)} 💬</span></div>",
                             unsafe_allow_html=True)
-                        st.markdown(f"<div class='mood-indicator' style='text-align: center;'>{mood_emoji}</div>",
+                        st.markdown(f"<div style='text-align: center; font-size: 20px;'>{mood_emoji}</div>",
                                     unsafe_allow_html=True)
-                    elif is_today:
-                        st.markdown(
-                            "<div style='text-align: center; color: white; font-size: 12px; margin-top: 5px;'>Today</div>",
-                            unsafe_allow_html=True)
 
 # ========================================
 # WEEK VIEW
@@ -268,12 +269,10 @@ if st.session_state.view_mode == "month":
 elif st.session_state.view_mode == "week":
     st.markdown("### 📊 This Week's Activity")
 
-    # Get current week dates
     today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     week_dates = [start_of_week + timedelta(days=i) for i in range(7)]
 
-    # Display week
     for date in week_dates:
         day_conversations = conversations_by_date.get(date, [])
         is_today = date == today
@@ -304,7 +303,7 @@ elif st.session_state.view_mode == "week":
             st.divider()
 
 # ========================================
-# LIST VIEW (Original)
+# LIST VIEW
 # ========================================
 elif st.session_state.view_mode == "list":
     st.markdown("### 📋 All Conversations (Latest First)")
@@ -317,7 +316,10 @@ elif st.session_state.view_mode == "list":
 
             with st.expander(
                     f"📅 {generated_at.strftime('%b %d, %Y at %I:%M %p')} - {item.get('participant', 'Unknown')}"):
-                st.markdown(f"**Summary:** {item.get('simple_summary', 'No summary')}")
+
+                # Show CAREGIVER summary (not patient summary)
+                caregiver_summary = item.get('caregiver_summary', item.get('simple_summary', 'No summary'))
+                st.markdown(f"**Summary:** {caregiver_summary}")
 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -334,12 +336,11 @@ elif st.session_state.view_mode == "list":
                     st.warning("**⚠️ Concerns:** " + ", ".join(concerns))
 
 # ========================================
-# ANALYTICS SIDEBAR
+# SIDEBAR ANALYTICS
 # ========================================
 with st.sidebar:
     st.markdown("### 📊 Quick Stats")
 
-    # Total conversations
     st.markdown(f"""
     <div class='stats-card'>
         <div class='stats-number'>{len(all_summaries)}</div>
@@ -349,14 +350,12 @@ with st.sidebar:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # This week
     today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     this_week = [s for s in all_summaries if s.get('generated_at', datetime.now()).date() >= start_of_week]
 
     st.metric("This Week", len(this_week))
 
-    # Mood distribution
     if all_summaries:
         moods = [s.get('patient_mood', 'unknown').lower() for s in all_summaries]
         mood_counts = pd.Series(moods).value_counts()
@@ -368,7 +367,6 @@ with st.sidebar:
 
     st.divider()
 
-    # Top concerns
     all_concerns = []
     for s in all_summaries:
         all_concerns.extend([c.strip() for c in s.get('key_concerns', []) if c.strip()])
@@ -381,16 +379,13 @@ with st.sidebar:
 
 
 # ========================================
-# DATE DIALOG (Popup with day's details)
+# DATE DIALOG
 # ========================================
 @st.dialog("📅 Conversations Summary", width="large")
 def date_dialog():
-    """Show all conversations for selected date"""
-
     selected_date = st.session_state.selected_date
     day_conversations = conversations_by_date.get(selected_date, [])
 
-    # Header
     st.markdown(f"### {selected_date.strftime('%A, %B %d, %Y')}")
 
     if not day_conversations:
@@ -400,7 +395,6 @@ def date_dialog():
             st.rerun()
         return
 
-    # Summary stats
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Conversations", len(day_conversations))
@@ -416,16 +410,15 @@ def date_dialog():
 
     st.divider()
 
-    # List all conversations
     for idx, conv in enumerate(day_conversations):
         time_str = conv.get('generated_at', datetime.now()).strftime('%I:%M %p')
 
         with st.expander(f"🕐 {time_str} - {conv.get('participant', 'Unknown')}", expanded=(idx == 0)):
-            # Simple summary
-            st.markdown(f"**Summary:**")
-            st.info(conv.get('simple_summary', 'No summary available'))
+            # Show CAREGIVER summary
+            caregiver_summary = conv.get('caregiver_summary', conv.get('simple_summary', 'No summary'))
+            st.markdown(f"**Caregiver Summary:**")
+            st.info(caregiver_summary)
 
-            # Clinical details
             col_mood, col_cog = st.columns(2)
             with col_mood:
                 mood = conv.get('patient_mood', 'unknown')
@@ -435,25 +428,21 @@ def date_dialog():
             with col_cog:
                 st.markdown(f"**Cognitive State:** {conv.get('cognitive_state', 'N/A')}")
 
-            # Topics
             topics = conv.get('topics_discussed', [])
             if topics:
                 st.markdown("**Topics Discussed:**")
                 st.markdown("• " + "\n• ".join(topics))
 
-            # Concerns
             concerns = conv.get('key_concerns', [])
             if concerns:
                 st.warning("**⚠️ Key Concerns:**\n• " + "\n• ".join(concerns))
 
     st.divider()
 
-    # Close button
     if st.button("✕ Close", use_container_width=True, type="secondary"):
         st.session_state.show_date_dialog = False
         st.rerun()
 
 
-# Show dialog if triggered
 if st.session_state.show_date_dialog:
     date_dialog()
